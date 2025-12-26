@@ -3,7 +3,7 @@ set -e
 
 REPO_URL="https://github.com/blasterss/vpn_bot.git"
 INSTALL_DIR="$HOME/vpn_bot"
-SERVICE_NAME="$HOME/vpn_bot.service"
+SERVICE_NAME="vpn_bot.service"
 
 echo "=== Установка vpn_bot ==="
 
@@ -91,13 +91,13 @@ After=network.target
 
 [Service]
 Type=simple
-User="${SUDO_USER:-$USER}"
+User=${SUDO_USER:-$USER}
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$INSTALL_DIR/.env
 ExecStart=$INSTALL_DIR/.venv/bin/python $INSTALL_DIR/src/bot.py
 CPUQuota=40%
 Restart=always
-RestartSec=5
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
@@ -107,7 +107,7 @@ EOF
 
 
 ### systemd ###
-$SUDO cp $SERVICE_NAME /etc/systemd/system/$SERVICE_NAME
+$SUDO cp $INSTALL_DIR/$SERVICE_NAME /etc/systemd/system/$SERVICE_NAME
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable $SERVICE_NAME
 $SUDO systemctl restart $SERVICE_NAME
