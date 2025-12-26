@@ -2,8 +2,8 @@
 set -e
 
 REPO_URL="https://github.com/blasterss/vpn_bot.git"
-INSTALL_DIR="/vpn_bot"
-SERVICE_NAME="vpn_bot.service"
+INSTALL_DIR="$HOME/vpn_bot"
+SERVICE_NAME="$HOME/vpn_bot.service"
 
 echo "=== Установка vpn_bot ==="
 
@@ -67,10 +67,14 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 ### .env ###
+echo "==== ВВОД ПАРАМЕТРОВ ===="
 echo "Введите параметры конфигурации"
 read -s -p "BOT_TOKEN: " BOT_TOKEN
+echo ""
 read -s -p "SECRET_KEY: " SECRET_KEY
 
+
+echo "=== ГЕНЕРАЦИЯ .env ==="
 cat > .env <<EOF
 SCRIPT_PATH=$HOME/openvpn-install.sh
 WORKING_DIR=$HOME
@@ -79,8 +83,31 @@ BOT_TOKEN=$BOT_TOKEN
 SECRET_KEY=$SECRET_KEY
 EOF
 
+echo "=== ГЕНЕРАЦИЯ vpn_bot.service ==="
+cat > vpn_bot.service <<EOF
+[Unit]
+Description=VPN Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User="${SUDO_USER:-$USER}"
+WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=$INSTALL_DIR/.env
+ExecStart=$INSTALL_DIR/.venv/bin/python $INSTALL_DIR/src/bot.py
+CPUQuota=40%
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+
 ### systemd ###
-$SUDO cp deploy/$SERVICE_NAME /etc/systemd/system/$SERVICE_NAME
+$SUDO cp $SERVICE_NAME /etc/systemd/system/$SERVICE_NAME
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable $SERVICE_NAME
 $SUDO systemctl restart $SERVICE_NAME
