@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-REPO_URL="https://github.com/blasterss/fc_vpn_bot.git"
+REPO_URL="https://github.com/blasterss/vpn_bot.git"
 INSTALL_DIR="/vpn_bot"
 SERVICE_NAME="vpn_bot.service"
 
