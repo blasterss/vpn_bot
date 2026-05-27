@@ -35,7 +35,13 @@ install_packages() {
     case "$PKG" in
         apt)
             $SUDO apt update
-            $SUDO apt install -y git python3 python3-venv python3-pip
+            PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+            $SUDO apt install -y \
+                git \
+                python3 \
+                python3-pip \
+                python3-venv \
+                python${PYTHON_VERSION}-venv
             ;;
         dnf)
             $SUDO dnf install -y git python3 python3-virtualenv python3-pip
