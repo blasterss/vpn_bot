@@ -46,26 +46,7 @@ install_packages() {
     esac
 }
 
-echo "=== Проверка зависимостей ==="
-
-NEED_INSTALL=0
-
-if ! command -v git >/dev/null 2>&1; then
-    NEED_INSTALL=1
-fi
-
-if ! command -v python3 >/dev/null 2>&1; then
-    NEED_INSTALL=1
-fi
-
-if ! python3 -m venv --help >/dev/null 2>&1; then
-    NEED_INSTALL=1
-fi
-
-if [ "$NEED_INSTALL" -eq 1 ]; then
-    echo "Устанавливаются зависимости..."
-    install_packages
-fi
+install_packages
 
 ### Клонирование ###
 if [ ! -d "$INSTALL_DIR" ]; then
@@ -101,6 +82,23 @@ BOT_TOKEN=$BOT_TOKEN
 SECRET_KEY=$SECRET_KEY
 EOF
 
+echo "=== Настройка sudoers ==="
+
+SUDOERS_FILE="/etc/sudoers.d/vpn_bot"
+
+cat <<EOF | $SUDO tee $SUDOERS_FILE >/dev/null
+$REAL_USER ALL=(ALL) NOPASSWD: $REAL_HOME/openvpn-install.sh
+EOF
+
+$SUDO chmod 440 $SUDOERS_FILE
+
+if $SUDO visudo -c >/dev/null 2>&1; then
+    echo "sudoers успешно настроен"
+else
+    echo "Ошибка в sudoers!"
+    exit 1
+fi
+
 echo "=== ГЕНЕРАЦИЯ vpn_bot.service ==="
 cat > vpn_bot.service <<EOF
 [Unit]
@@ -109,7 +107,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=${SUDO_USER:-$USER}
+User=$REAL_USER
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$INSTALL_DIR/.env
 ExecStart=$INSTALL_DIR/.venv/bin/python $INSTALL_DIR/src/bot.py
