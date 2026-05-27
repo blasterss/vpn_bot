@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
+REAL_USER=${SUDO_USER:-$USER}
+REAL_HOME=$(eval echo "~$REAL_USER")
+
 REPO_URL="https://github.com/blasterss/vpn_bot.git"
-INSTALL_DIR="$HOME/vpn_bot"
+INSTALL_DIR="$REAL_HOME/vpn_bot"
 SERVICE_NAME="vpn_bot.service"
 
 echo "=== Установка vpn_bot ==="
@@ -57,7 +60,7 @@ fi
 cd "$INSTALL_DIR"
 
 ### venv ###
-if [ ! -d venv ]; then
+if [ ! -d .venv ]; then
     python3 -m venv .venv
 fi
 
@@ -76,8 +79,8 @@ read -s -p "SECRET_KEY: " SECRET_KEY
 
 echo "=== ГЕНЕРАЦИЯ .env ==="
 cat > .env <<EOF
-SCRIPT_PATH=$HOME/openvpn-install.sh
-WORKING_DIR=$HOME
+SCRIPT_PATH=$REAL_HOME/openvpn-install.sh
+WORKING_DIR=$REAL_HOME
 
 BOT_TOKEN=$BOT_TOKEN
 SECRET_KEY=$SECRET_KEY

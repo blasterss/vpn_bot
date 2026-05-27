@@ -18,7 +18,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")      # Токен бота из переменных окружения
 WORKING_DIR = os.getenv("WORKING_DIR")  # Рабочая директория
 SCRIPT_PATH = os.getenv("SCRIPT_PATH")  # Полный путь к скрипту
-SECRET_CODE = os.getenv("SECRET_CODE")  # Секретный код для проверки текущих соединений
+SECRET_KEY = os.getenv("SECRET_KEY")  # Секретный код для проверки текущих соединений
 
 # Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
@@ -47,6 +47,7 @@ async def create_vpn_user(client_name: str) -> str:
     logger.info(f"Запуск создания VPN пользователя: {client_name}")
 
     process = await asyncio.create_subprocess_exec(
+        "sudo",
         SCRIPT_PATH,
         "client",
         "add",
@@ -114,7 +115,7 @@ async def cmd_secure_server_activity(message: types.Message, state: FSMContext):
 
 @dp.message(SecureServerStates.waiting_for_secret)
 async def process_secret_code(message: types.Message, state: FSMContext):
-    if message.text != SECRET_CODE:
+    if message.text != SECRET_KEY:
         await message.answer("❌ Доступ запрещен")
         await state.clear()
         return
@@ -122,6 +123,7 @@ async def process_secret_code(message: types.Message, state: FSMContext):
     logger.info("Секретный код подтверждён")
 
     process = await asyncio.create_subprocess_exec(
+        "sudo",
         SCRIPT_PATH,
         "server",
         "status",
