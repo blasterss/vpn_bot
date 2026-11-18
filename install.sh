@@ -65,6 +65,16 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
+### Доступные VPN-скрипты (VPN-серверы должны быть установлены заранее) ###
+OPENVPN_SCRIPT=""
+WIREGUARD_SCRIPT=""
+if [ -x "$REAL_HOME/openvpn-install.sh" ]; then
+    OPENVPN_SCRIPT="$REAL_HOME/openvpn-install.sh"
+fi
+if [ -x "$REAL_HOME/wireguard-install.sh" ]; then
+    WIREGUARD_SCRIPT="$REAL_HOME/wireguard-install.sh"
+fi
+
 ### .env ###
 echo "==== ВВОД ПАРАМЕТРОВ ===="
 echo "Введите параметры конфигурации"
@@ -75,20 +85,32 @@ read -s -p "SECRET_KEY: " SECRET_KEY
 
 echo "=== ГЕНЕРАЦИЯ .env ==="
 cat > .env <<EOF
-SCRIPT_PATH=$REAL_HOME/openvpn-install.sh
+SCRIPT_PATH=$OPENVPN_SCRIPT
+WIREGUARD_SCRIPT_PATH=$WIREGUARD_SCRIPT
+WIREGUARD_CONFIG_DIR=$REAL_HOME
+WIREGUARD_INTERFACE=wg0
 WORKING_DIR=$REAL_HOME
 
 BOT_TOKEN=$BOT_TOKEN
 SECRET_KEY=$SECRET_KEY
 EOF
 
+chmod 600 .env
+chown "$REAL_USER" .env
+
 echo "=== Настройка sudoers ==="
 
 SUDOERS_FILE="/etc/sudoers.d/vpn_bot"
 
-cat <<EOF | $SUDO tee $SUDOERS_FILE >/dev/null
-$REAL_USER ALL=(ALL) NOPASSWD: $REAL_HOME/openvpn-install.sh
-EOF
+# Разрешаем только обнаруженные скрипты; не выдаём доступ к произвольным командам.
+{
+    echo "# vpn_bot VPN scripts"
+    for script in "$OPENVPN_SCRIPT" "$WIREGUARD_SCRIPT"; do
+        if [ -n "$script" ]; then
+            echo "$REAL_USER ALL=(root) NOPASSWD: $script"
+        fi
+    done
+} | $SUDO tee "$SUDOERS_FILE" >/dev/null
 
 $SUDO chmod 440 $SUDOERS_FILE
 

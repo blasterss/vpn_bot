@@ -1,13 +1,19 @@
-import os
 import asyncio
 import logging
+import os
+import re
 import time
+import uuid
+from html import escape
+from pathlib import Path
+
+import pexpect
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import FSInputFile, ReplyKeyboardRemove
-from dotenv import load_dotenv
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import FSInputFile, ReplyKeyboardRemove
+from dotenv import load_dotenv
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -15,17 +21,66 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 # Конфигурация
-BOT_TOKEN = os.getenv("BOT_TOKEN")      # Токен бота из переменных окружения
-WORKING_DIR = os.getenv("WORKING_DIR")  # Рабочая директория
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Токен бота из переменных окружения
+WORKING_DIR = os.getenv("WORKING_DIR", str(Path.home()))  # Рабочая директория
 SCRIPT_PATH = os.getenv("SCRIPT_PATH")  # Полный путь к скрипту
 SECRET_KEY = os.getenv("SECRET_KEY")  # Секретный код для проверки текущих соединений
 
-# Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN)
+WIREGUARD_SCRIPT_PATH = os.getenv("WIREGUARD_SCRIPT_PATH")
+WIREGUARD_CONFIG_DIR = os.getenv("WIREGUARD_CONFIG_DIR", WORKING_DIR)
+WIREGUARD_INTERFACE = os.getenv("WIREGUARD_INTERFACE", "wg0")
+
+# Создаём Bot только после проверки конфигурации в main().
+bot: Bot
 dp = Dispatcher()
+vpn_lock = asyncio.Lock()
+
+
+def script_available(path: str | None) -> bool:
+    return bool(path and Path(path).is_file() and os.access(path, os.X_OK))
+
+
+def create_wireguard_user(client_name: str) -> str:
+    """Drive angristan's installed-server menu using a terminal for IP defaults."""
+    if not script_available(WIREGUARD_SCRIPT_PATH):
+        raise ValueError("WireGuard не настроен: задайте WIREGUARD_SCRIPT_PATH")
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,15}", client_name):
+        raise ValueError("WireGuard: допустимо до 15 букв, цифр, _ или -")
+    child = pexpect.spawn(
+        "sudo",
+        ["-n", WIREGUARD_SCRIPT_PATH],
+        cwd=WORKING_DIR,
+        encoding="utf-8",
+        timeout=60,
+        echo=False,
+    )
+    try:
+        for prompt, answer in (
+            (r"Select an option \[1-5\]:", "1"),
+            (r"Client name:", client_name),
+            (r"Client WireGuard IPv4:", ""),
+            (r"Client WireGuard IPv6:", ""),
+        ):
+            child.expect(prompt)
+            child.sendline(answer)
+        child.expect(pexpect.EOF)
+        child.close()
+        if child.exitstatus != 0:
+            raise RuntimeError("Скрипт WireGuard завершился с ошибкой")
+    except (pexpect.TIMEOUT, pexpect.EOF) as exc:
+        raise RuntimeError("Неожиданный ответ или тайм-аут скрипта WireGuard") from exc
+    finally:
+        if child.isalive():
+            child.terminate(force=True)
+    output = Path(WIREGUARD_CONFIG_DIR) / f"{WIREGUARD_INTERFACE}-client-{client_name}.conf"
+    if not output.is_file():
+        raise FileNotFoundError(output)
+    return str(output)
+
 
 class SecureServerStates(StatesGroup):
     waiting_for_secret = State()
+
 
 async def create_vpn_user(client_name: str) -> str:
     """
@@ -35,39 +90,40 @@ async def create_vpn_user(client_name: str) -> str:
         client_name (str): Имя клиента (имя пользователя tg)
 
     Raises:
-        RuntimeError: 
+        RuntimeError:
         FileNotFoundError:
 
     Returns:
         str: Путь к файлу конфигурации VPN пользователя
     """
-    
+
+    if not script_available(SCRIPT_PATH):
+        raise ValueError("OpenVPN не настроен: задайте SCRIPT_PATH")
     output_file = os.path.join(WORKING_DIR, f"{client_name}.ovpn")
 
     logger.info(f"Запуск создания VPN пользователя: {client_name}")
 
     process = await asyncio.create_subprocess_exec(
         "sudo",
+        "-n",
         SCRIPT_PATH,
         "client",
         "add",
         client_name,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        cwd=WORKING_DIR
+        cwd=WORKING_DIR,
     )
 
-    stdout, stderr = await process.communicate()
-
-    # Логирование вывода скрипта
-    if stdout:
-        logger.info(f"STDOUT: {stdout.decode()}")
-    if stderr:
-        logger.warning(f"STDERR: {stderr.decode()}")
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        process.kill()
+        await process.communicate()
+        raise
 
     if process.returncode != 0:
-        error_msg = stderr.decode() if stderr else stdout.decode()
-        raise RuntimeError(f"Ошибка при создании VPN пользователя: {error_msg}")
+        raise RuntimeError(f"Скрипт OpenVPN завершился с кодом {process.returncode}")
 
     # Проверка существования файла конфигурации
     if not os.path.exists(output_file):
@@ -78,12 +134,12 @@ async def create_vpn_user(client_name: str) -> str:
             os.path.join("/root", f"{client_name}.ovpn"),
             os.path.join("/root", f"{client_name}.conf"),
         ]
-        
+
         for path in possible_paths:
             if os.path.exists(path):
                 logger.info(f"Файл найден по альтернативному пути: {path}")
                 return path
-        
+
         raise FileNotFoundError(
             f"Файл конфигурации не найден после выполнения скрипта. "
             f"Проверенные пути: {possible_paths}"
@@ -92,6 +148,7 @@ async def create_vpn_user(client_name: str) -> str:
     logger.info(f"Файл конфигурации успешно создан: {output_file}")
     return output_file
 
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     username = message.from_user.username or f"user_{message.from_user.id}"
@@ -99,8 +156,9 @@ async def cmd_start(message: types.Message):
     await message.answer(
         f"Привет, {username}!👋\n"
         "🤖 Я Бот для создания VPN конфигураций\n\n"
-        "Используйте команду /getvpn для создания конфигурации.\n"
+        "/getopenvpn — OpenVPN, /getwireguard — WireGuard.\n"
     )
+
 
 @dp.message(Command("__secure_server_activity"))
 async def cmd_secure_server_activity(message: types.Message, state: FSMContext):
@@ -109,27 +167,32 @@ async def cmd_secure_server_activity(message: types.Message, state: FSMContext):
     await state.set_state(SecureServerStates.waiting_for_secret)
 
     await message.answer(
-        "Введите секретный код для проверки активности сервера",
-        reply_markup=ReplyKeyboardRemove()
+        "Введите секретный код для проверки активности сервера", reply_markup=ReplyKeyboardRemove()
     )
+
 
 @dp.message(SecureServerStates.waiting_for_secret)
 async def process_secret_code(message: types.Message, state: FSMContext):
-    if message.text != SECRET_KEY:
+    if not SECRET_KEY or message.text != SECRET_KEY:
         await message.answer("❌ Доступ запрещен")
         await state.clear()
         return
 
     logger.info("Секретный код подтверждён")
 
+    if not script_available(SCRIPT_PATH):
+        await message.answer("OpenVPN не настроен")
+        await state.clear()
+        return
     process = await asyncio.create_subprocess_exec(
         "sudo",
+        "-n",
         SCRIPT_PATH,
         "server",
         "status",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        cwd=WORKING_DIR
+        cwd=WORKING_DIR,
     )
 
     stdout, stderr = await process.communicate()
@@ -145,53 +208,69 @@ async def process_secret_code(message: types.Message, state: FSMContext):
         raise RuntimeError(f"Ошибка при проверке активности сервера: {error_msg}")
 
     await message.answer(
-        f"✅ Сервер активен\n\n<pre>{stdout.decode()}</pre>",
+        f"✅ Сервер активен\n\n<pre>{escape(stdout.decode())[:3500]}</pre>",
         parse_mode="HTML",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
 
     await state.clear()
 
-@dp.message(Command("getvpn"))
+
+@dp.message(Command("getopenvpn", "getwireguard"))
 async def cmd_vpn(message: types.Message):
     """Обработчик команды создания VPN конфигурации"""
 
+    wireguard = message.text.split()[0].split("@")[0] == "/getwireguard"
     base_name = message.from_user.username or f"user_{message.from_user.id}"
 
+    script = WIREGUARD_SCRIPT_PATH if wireguard else SCRIPT_PATH
+    if not script_available(script):
+        name = "WireGuard" if wireguard else "OpenVPN"
+        await message.answer(f"❌ {name} недоступен: скрипт не настроен или отсутствует.")
+        return
     output_file = None
     try:
         # Создание VPN пользователя
-        client_name = f"{base_name}_{int(time.time())}"
-        await message.answer("⏳ Создаю VPN конфигурацию...")
-        output_file = await create_vpn_user(client_name)
-        
-        # Отправка файла пользователю
-        vpn_file = FSInputFile(output_file, filename=f"{client_name}.ovpn")
-        await message.answer_document(
-            vpn_file, 
-            caption=f"✅ VPN конфигурация для <code>{client_name}</code> готова!\n\n"
-                   "💡 Используйте этот файл в приложении OpenVPN Connect.",
-            parse_mode="HTML"
+        client_name = (
+            f"wg_{uuid.uuid4().hex[:12]}" if wireguard else f"{base_name}_{time.time_ns()}"
         )
-        
+        await message.answer("⏳ Создаю VPN конфигурацию...")
+        async with vpn_lock:
+            if wireguard:
+                output_file = await asyncio.to_thread(create_wireguard_user, client_name)
+            else:
+                output_file = await create_vpn_user(client_name)
+
+        # Отправка файла пользователю
+        vpn_file = FSInputFile(
+            output_file, filename=f"{client_name}{'.conf' if wireguard else '.ovpn'}"
+        )
+        app_name = "WireGuard" if wireguard else "OpenVPN Connect"
+        await message.answer_document(
+            vpn_file,
+            caption=f"✅ VPN конфигурация для <code>{client_name}</code> готова!\n\n"
+            f"💡 Используйте этот файл в приложении {app_name}.",
+            parse_mode="HTML",
+        )
+
         logger.info(f"VPN конфигурация успешно отправлена пользователю {message.from_user.id}")
 
     except FileNotFoundError as e:
         logger.error(f"FileNotFoundError для клиента {client_name}: {e}")
         await message.answer("❌ Ошибка: файл конфигурации не найден. Попробуйте снова.")
-    
+
     except ValueError as e:
         logger.error(f"ValueError для клиента {client_name}: {e}")
-        await message.answer(f"❌ Ошибка в имени клиента: {e}")
-    
+        await message.answer(f"❌ {e}")
+
     except RuntimeError as e:
         logger.error(f"RuntimeError для клиента {client_name}: {e}")
-        await message.answer(f"❌ Ошибка при создании VPN: {e}")
-    
+        await message.answer("❌ Ошибка при создании VPN. Подробности в журнале сервера.")
+
     except Exception as e:
         logger.error(f"Неожиданная ошибка для клиента {client_name}: {e}")
         await message.answer("⚠️ Произошла непредвиденная ошибка. Попробуйте позже.")
-    
+
     finally:
         if output_file and os.path.exists(output_file):
             try:
@@ -200,6 +279,7 @@ async def cmd_vpn(message: types.Message):
             except Exception as cleanup_err:
                 logger.error(f"Ошибка удаления файла {output_file}: {cleanup_err}")
 
+
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     """Обработчик команды /help"""
@@ -207,10 +287,11 @@ async def cmd_help(message: types.Message):
         "📖 <b>Помощь по боту</b>\n\n"
         "<b>Доступные команды:</b>\n"
         "• /start — Начать работу с ботом\n"
-        "• /getvpn — Создать VPN конфигурацию\n"
+        "• /getopenvpn — Создать OpenVPN конфигурацию\n"
+        "• /getwireguard — Создать .conf для приложения WireGuard\n"
         "• /help — Показать эту справку\n\n"
         "🌐 <b>Порядок действий для подключения к VPN:</b>\n"
-        "1) Введите команду <code>/getvpn</code> — бот создаст ваш индивидуальный VPN-конфиг.\n"
+        "1) Введите команду <code>/getopenvpn</code> — бот создаст ваш индивидуальный VPN-конфиг.\n"
         "2) Скачайте отправленный файл <code>.ovpn</code>.\n"
         "3) Установите клиент <b>OpenVPN</b>:\n"
         " • Windows — <a href='https://openvpn.net/community-downloads/'>OpenVPN GUI</a>\n"
@@ -219,22 +300,24 @@ async def cmd_help(message: types.Message):
         "4) Импортируйте полученный файл <code>.ovpn</code> в приложение OpenVPN.\n"
         "5) Нажмите «Подключиться» — и вы в VPN! 🔐\n\n",
         parse_mode="HTML",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
+
 
 async def main():
     """Основная функция запуска бота"""
-    # Проверка необходимых файлов и директорий
-    if not os.path.exists(SCRIPT_PATH):
-        logger.error(f"Скрипт {SCRIPT_PATH} не найден!")
-        return
-    
-    if not os.access(SCRIPT_PATH, os.X_OK):
-        logger.error(f"Скрипт {SCRIPT_PATH} не исполняемый!")
-        return
-    
+    global bot
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN не установлен")
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,15}", WIREGUARD_INTERFACE):
+        raise ValueError("Некорректный WIREGUARD_INTERFACE")
+    for script in (SCRIPT_PATH, WIREGUARD_SCRIPT_PATH):
+        if not script_available(script):
+            logger.warning("VPN-скрипт не настроен или недоступен: %s", script)
+    bot = Bot(token=BOT_TOKEN)
+
     logger.info("🚀 Бот запущен и готов выдавать VPN-конфиги")
-    
+
     try:
         await dp.start_polling(bot)
     except Exception as e:
@@ -242,10 +325,11 @@ async def main():
     finally:
         await bot.session.close()
 
+
 if __name__ == "__main__":
     # Проверка переменных окружения
     if not BOT_TOKEN:
         print("❌ Ошибка: BOT_TOKEN не установлен в переменных окружения")
         exit(1)
-    
+
     asyncio.run(main())
