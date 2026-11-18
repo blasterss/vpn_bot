@@ -226,7 +226,7 @@ async def cmd_vpn(message: types.Message):
     script = WIREGUARD_SCRIPT_PATH if wireguard else SCRIPT_PATH
     if not script_available(script):
         name = "WireGuard" if wireguard else "OpenVPN"
-        await message.answer(f"❌ {name} недоступен: скрипт не настроен или отсутствует.")
+        await message.answer(f"❌ {name} в настоящее время не доступен.")
         return
     output_file = None
     try:
