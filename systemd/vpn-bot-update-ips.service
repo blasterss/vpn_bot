@@ -1,0 +1,13 @@
+[Unit]
+Description=Update WireGuard client AllowedIPs
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/wireguard/params
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/default/vpn-bot-update-ips
+ExecStart=/usr/bin/python3 /usr/local/libexec/vpn-bot/update_wireguard_ips.py
+UMask=0077
+TimeoutStartSec=2min

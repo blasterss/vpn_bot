@@ -150,4 +150,14 @@ $SUDO systemctl daemon-reload
 $SUDO systemctl enable $SERVICE_NAME
 $SUDO systemctl restart $SERVICE_NAME
 
+### Обновление списка маршрутов WireGuard ###
+if $SUDO test -f /etc/wireguard/params; then
+    $SUDO install -d -m 755 /usr/local/libexec/vpn-bot
+    $SUDO install -o root -g root -m 644 scripts/update_wireguard_ips.py /usr/local/libexec/vpn-bot/update_wireguard_ips.py
+    $SUDO install -o root -g root -m 644 systemd/vpn-bot-update-ips.service systemd/vpn-bot-update-ips.timer /etc/systemd/system/
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now vpn-bot-update-ips.timer
+    $SUDO systemctl start --no-block vpn-bot-update-ips.service
+fi
+
 echo "=== Установка успешно завершена ==="
