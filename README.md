@@ -40,7 +40,7 @@ sudo ./install.sh
 
 6. Настройка `sudoers`
 
-   * бот получает возможность безопасно выполнять `openvpn-install.sh`
+   * бот получает возможность выполнять обнаруженные `openvpn-install.sh` и `wireguard-install.sh`
    * пароль sudo для этого скрипта не требуется
 
 7. Создание systemd unit:
@@ -55,8 +55,8 @@ sudo ./install.sh
 
 Перед установкой необходимо:
 
-* установленный и настроенный OpenVPN сервер
-* файл `openvpn-install.sh` в домашней директории пользователя
+* установленный и настроенный OpenVPN и/или WireGuard сервер
+* исполняемый `openvpn-install.sh` и/или `wireguard-install.sh` в домашней директории пользователя
 
 Например:
 
@@ -124,7 +124,7 @@ sudo systemctl restart vpn_bot.service
 
 ---
 
-### `/getvpn`
+### `/getopenvpn`
 
 Создание персональной OpenVPN-конфигурации.
 
@@ -166,7 +166,7 @@ sudo openvpn-install.sh
 
 * не запускать Telegram-бота от root
 * безопасно выдавать VPN-конфигурации
-* ограничить sudo только одним скриптом
+* ограничить sudo обнаруженными VPN-скриптами
 
 ---
 
@@ -248,3 +248,50 @@ sudo rm /etc/sudoers.d/vpn_bot
 ## Репозиторий
 
 https://github.com/blasterss/vpn_bot
+
+## WireGuard и настройки
+
+Поддерживается интерактивный [скрипт angristan](https://github.com/angristan/wireguard-install).
+Сначала установите и настройте сервер этим скриптом вручную. Бот добавляет клиентов
+через меню уже установленного сервера, принимая предложенные IPv4/IPv6.
+Команда `/getwireguard` выдаёт `.conf`, который нужно импортировать в приложение WireGuard.
+Запросы создания клиентов выполняются последовательно, чтобы не выделить один IP дважды.
+Вывод скрипта с QR-кодом не записывается в журнал.
+
+Установщик обнаруживает оба скрипта независимо. Отсутствующий скрипт не мешает
+запуску бота; его команда сообщает о недоступности VPN. `/getvpn` переименована в `/getopenvpn`.
+Команда администратора проверяет OpenVPN; без него сообщает, что он не настроен.
+
+Для ручной настройки скопируйте `.env.example` в `.env`:
+
+| Переменная | Значение |
+| --- | --- |
+| `SCRIPT_PATH` | Путь к OpenVPN-скрипту с командами `client add` и `server status`; можно оставить пустым |
+| `WORKING_DIR` | Рабочая директория, по умолчанию домашняя директория пользователя |
+| `WIREGUARD_SCRIPT_PATH` | Путь к `wireguard-install.sh`; можно оставить пустым |
+| `WIREGUARD_INTERFACE` | Имя интерфейса из `/etc/wireguard/params`, по умолчанию `wg0` |
+| `WIREGUARD_CONFIG_DIR` | Каталог файлов `wg0-client-<имя>.conf`, по умолчанию `WORKING_DIR` |
+
+angristan обычно сохраняет конфиги в `/home/$SUDO_USER`. Пользователь бота должен
+иметь доступ на чтение и удаление файлов в этом каталоге. Для существующей установки
+добавьте путь к WireGuard-скрипту в `/etc/sudoers.d/vpn_bot` через `sudo visudo -f /etc/sudoers.d/vpn_bot`:
+
+```sudoers
+ubuntu ALL=(root) NOPASSWD: /home/ubuntu/wireguard-install.sh
+```
+
+Замените пользователя и путь своими значениями, заполните `.env` и перезапустите сервис.
+
+## Разработка
+
+Зависимости объявлены в `pyproject.toml`; `requirements.txt` устанавливает проект из него.
+Неиспользуемые зависимости прежнего бота убраны. Ruff устанавливается вместе с проектом.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+ruff check .
+ruff format --check .
+python -m unittest discover -s tests -v
+```
