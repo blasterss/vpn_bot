@@ -295,3 +295,79 @@ ruff check .
 ruff format --check .
 python -m unittest discover -s tests -v
 ```
+
+## Автоматическое обновление AllowedIPs WireGuard
+
+`scripts/update_wireguard_ips.py` загружает [список IPv4](https://gist.githubusercontent.com/iamwildtuna/7772b7c84a11bf6e1385f23096a73a15/raw/gistfile2.txt),
+проверяет адреса и подсети, добавляет `/32` одиночным адресам и удаляет дубли.
+Затем атомарно заменяет только строку `ALLOWED_IPS` в `/etc/wireguard/params`,
+сохраняя права и владельца. Ошибка загрузки, пустой список или некорректный IP
+прерывают обновление. Остальные настройки и ключи остаются в файле.
+
+Список заменяет прежний `ALLOWED_IPS`, включая `0.0.0.0/0,::/0`: новые конфиги
+направляют через VPN только перечисленные IPv4-сети. IPv6 в список не добавляется.
+Уже выданные конфиги не меняются: клиентам нужно самостоятельно обновить AllowedIPs
+или получить новый конфиг через `/getwireguard`. Перезапуск WireGuard не требуется.
+
+При наличии `/etc/wireguard/params` установщик подключает systemd-таймер и запускает
+первое обновление. Далее обновления выполняются еженедельно, с задержкой до часа.
+Пропущенный из-за выключения сервера запуск выполняется после включения.
+Без WireGuard таймер не устанавливается.
+
+Для существующей установки выполните из корня репозитория:
+
+```bash
+sudo install -d -m 755 /usr/local/libexec/vpn-bot
+sudo install -o root -g root -m 644 scripts/update_wireguard_ips.py /usr/local/libexec/vpn-bot/update_wireguard_ips.py
+sudo install -o root -g root -m 644 systemd/vpn-bot-update-ips.service systemd/vpn-bot-update-ips.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vpn-bot-update-ips.timer
+sudo systemctl start vpn-bot-update-ips.service
+```
+
+Источник берётся из переменной окружения `SOURCE_URL`; если она не задана,
+используется ссылка выше. Для systemd задайте её в `/etc/default/vpn-bot-update-ips`:
+
+```bash
+SOURCE_URL=https://gist.githubusercontent.com/iamwildtuna/7772b7c84a11bf6e1385f23096a73a15/raw/gistfile2.txt
+```
+
+Файл настроек необязателен. Новое значение применяется при следующем запуске сервиса.
+Для разового запуска можно передать `--url` (имеет приоритет над `SOURCE_URL`):
+
+```bash
+sudo python3 scripts/update_wireguard_ips.py --url https://example.org/vpn-ips.txt
+```
+
+Путь к файлу настроек WireGuard можно изменить через `--params /path/to/params`.
+
+Проверка расписания и журналов:
+
+```bash
+systemctl list-timers vpn-bot-update-ips.timer
+sudo journalctl -u vpn-bot-update-ips.service -n 50 --no-pager
+```
+
+Чтобы обновлять раз в два дня, выполните `sudo systemctl edit vpn-bot-update-ips.timer`:
+
+```ini
+[Timer]
+OnCalendar=
+OnCalendar=*-*-01/2 04:00:00
+```
+
+Это запуск через день в пределах каждого месяца. Для запуска раз в две недели
+после предыдущего запуска используйте вместо `OnCalendar=*-*-01/2 04:00:00` строки
+`OnBootSec=15min` и `OnUnitActiveSec=14d` (после перезагрузки будет запуск через 15 минут).
+После изменения расписания:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart vpn-bot-update-ips.timer
+```
+
+Отключение автоматического обновления:
+
+```bash
+sudo systemctl disable --now vpn-bot-update-ips.timer
+```
