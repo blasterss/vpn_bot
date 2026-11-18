@@ -18,6 +18,18 @@ class AddressTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 updater.parse_addresses(text)
 
+    def test_windows_routes_do_not_import_masks_or_gateways(self):
+        text = (
+            "route ADD 8.8.8.0 MASK 255.255.255.0 0.0.0.0\n"
+            "route ADD 9.9.9.9 MASK 255.255.255.255 192.168.1.1\n"
+            "8.8.8.8/32\n# Example 0.0.0.0/0\n"
+        )
+        self.assertEqual(updater.parse_addresses(text), ["8.8.8.0/24", "9.9.9.9/32"])
+
+    def test_reject_invalid_windows_netmask(self):
+        with self.assertRaises(ValueError):
+            updater.parse_addresses("route ADD 8.8.8.0 MASK 255.0.255.0 0.0.0.0")
+
     def test_env_url_and_cli_override(self):
         for args, expected in (
             ([], "https://example.com/env"),

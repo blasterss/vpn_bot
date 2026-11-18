@@ -22,13 +22,28 @@ ALLOWED_PATTERN = re.compile(r"^ALLOWED_IPS=.*$", re.MULTILINE)
 
 def parse_addresses(text: str) -> list[str]:
     networks = set()
-    for match in IP_PATTERN.finditer(text):
-        # Refuse the entire update if any extracted address is invalid.
-        network = ipaddress.IPv4Network(match.group(), strict=False)
-        networks.add(str(network))
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith(("#", "//")):
+            continue
+        if re.match(r"route\s+add\s", line, re.IGNORECASE):
+            route = re.fullmatch(
+                r"route\s+add\s+(\S+)\s+mask\s+(\S+)\s+(\S+)",
+                line,
+                re.IGNORECASE,
+            )
+            if route is None:
+                raise ValueError(f"Некорректная строка route ADD: {line}")
+            destination, mask, gateway = route.groups()
+            ipaddress.IPv4Address(gateway)
+            # Gateway and netmask are not destination routes.
+            networks.add(ipaddress.IPv4Network(f"{destination}/{mask}", strict=False))
+            continue
+        for match in IP_PATTERN.finditer(line):
+            networks.add(ipaddress.IPv4Network(match.group(), strict=False))
     if not networks:
         raise ValueError("Список не содержит IPv4-адресов")
-    return sorted(networks)
+    return [str(network) for network in ipaddress.collapse_addresses(networks)]
 
 
 def download_addresses(url: str) -> list[str]:

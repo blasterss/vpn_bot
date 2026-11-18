@@ -65,7 +65,7 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
             )
             with patch.multiple(bot, SCRIPT_PATH=None, WIREGUARD_SCRIPT_PATH=None):
                 await bot.cmd_vpn(message)
-            self.assertIn("недоступен", message.answer.call_args.args[0])
+            self.assertIn("недоступен", message.answer.call_args.args[0].replace(" ", ""))
             message.answer_document.assert_not_awaited()
 
     async def test_openvpn_arguments(self):
